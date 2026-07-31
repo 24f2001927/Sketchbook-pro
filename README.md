@@ -222,9 +222,9 @@ graph TD
 - **Backend Tests**: Pytest for Python FastAPI, Supertest + Mocha/Jest for Node.js API endpoints.
 
 ### 21. Deployment Architecture
-- Monorepo containing Dockerfiles for all services.
-- **Client App**: Deployed to Vercel/Netlify for fast static asset hosting via edge CDNs.
-- **Node/Python Services**: Deployed via Kubernetes / AWS ECS with auto-scaling groups based on CPU/Memory load.
+- **Infrastructure as Code**: Managed via [`render.yaml`](file:///home/tahmeed/Desktop/Sketchbook-pro/Sketchbook-pro/render.yaml) (Render Blueprint specification) for automated zero-downtime deployments.
+- **Frontend App**: Deployed as a high-performance static web application served via global CDN edge networks (`env: static`, built from `./frontend/dist`).
+- **Node/Python Microservices**: Modular blueprint definitions ready for scaling out real-time Fastify/WebSocket gateway and FastAPI AI microservices on containerized cloud runners.
 
 ### 22. Security Model
 - Strong Content Security Policies (CSP) blocking unauthorized scripts and connections.
@@ -259,7 +259,7 @@ gantt
     section Phase 3: 3D Engine & Animation
     Three.js Viewport Integration      : des11, after des10, 10d
     3D Gizmos & Primitives             : des12, after des11, 7d
-    2D Frame-by-Frame Timeline         : des13, after des12, 12d
+    2D Frame-by-Frame Timeline         : des13, after des13, 12d
     Interpolation Curves & onion skins : des14, after des13, 8d
     section Phase 4: Server Systems & Collab
     Node.js Gateway & Database Schema  : des15, after des14, 10d
@@ -271,16 +271,59 @@ gantt
     Sandboxed Plugin System & Sandbox  : des20, after des19, 10d
 ```
 
-### Phase 1: Core Foundation & Canvas Engine (Active)
-- Establish monorepo workspace.
-- Implement PointerEvents stylus abstraction and stabilizer.
-- Build the 2D tiled rendering viewport (Canvas/WebGL2 fallback).
-- Establish core Brush Engine (size, opacity, basic presets).
-- Build the initial layer model with blend modes.
-- Implement local project saving/loading and WebP/PNG export.
+### Phase 1 & 2 Progress (Completed Core Modules)
+- ✅ Monorepo workspace configuration (`npm` workspaces).
+- ✅ Normalization & stroke stabilization layer (`StylusInput.ts`).
+- ✅ 2D tiled rendering viewport with dirty rect tracking (`ViewportRenderer.ts`).
+- ✅ Procedural stamp brush engine with pressure/tilt dynamics (`BrushEngine.ts`).
+- ✅ Layer stack, blending modes, and vanilla document model store (`document.ts`).
+- ✅ Pen Tool, Bezier math, path rendering & Boolean operations (`PenTool.ts`, `BezierMath.ts`, `BooleanOps.ts`).
+- ✅ On-canvas typography & text tool overlay (`TextToolOverlay.tsx`).
+- ✅ Professional Studio UI with dockable resizable panels (`ResizablePanel.tsx`).
+- ✅ Project saving/loading & multi-format export (`ExportEngine.ts`).
+- ✅ Render.yaml blueprint specification for static web deployment.
 
 ---
 
-## Getting Started (Local Development)
+## 🚀 Getting Started (Local Development)
 
-*(To be updated as codebases are initialized)*
+### Prerequisites
+- **Node.js**: v20.x or higher
+- **npm**: v10.x or higher
+
+### Installation & Setup
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-org/sketchbook-pro.git
+   cd sketchbook-pro
+   ```
+
+2. **Install workspace dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Start the Frontend Development Server**:
+   ```bash
+   npm run dev:frontend
+   ```
+   The local creative studio app will launch at `http://localhost:5173`.
+
+4. **Build for Production**:
+   ```bash
+   npm run build:frontend
+   ```
+   Output bundle is generated under `frontend/dist`.
+
+---
+
+## ☁️ Deployment (Render.com)
+
+The project includes a ready-to-use Render Blueprint definition ([`render.yaml`](file:///home/tahmeed/Desktop/Sketchbook-pro/Sketchbook-pro/render.yaml)).
+
+To deploy:
+1. Push your repository to GitHub or GitLab.
+2. In [Render Dashboard](https://dashboard.render.com), click **New +** → **Blueprint**.
+3. Connect your repository. Render will automatically parse `render.yaml` and deploy `sketchbook-pro-frontend` as a global static web service.
+

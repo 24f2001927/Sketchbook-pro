@@ -1,0 +1,59 @@
+# Render Blueprint Specification
+# Documentation: https://render.com/docs/blueprint-spec
+
+services:
+  # ---------------------------------------------------------------------------
+  # Frontend Static Web App (React 19 + TypeScript + Vite)
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: sketchbook-pro-frontend
+    env: static
+    buildCommand: npm install && npm run build:frontend
+    staticPublishPath: ./frontend/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+
+  # ---------------------------------------------------------------------------
+  # Node.js Real-time API & Gateway (Fastify + WebSockets)
+  # Uncomment and configure when backend-node service is added
+  # ---------------------------------------------------------------------------
+  # - type: web
+  #   name: sketchbook-pro-backend-node
+  #   env: node
+  #   buildCommand: npm install
+  #   startCommand: npm run start --workspace=backend-node
+  #   envVars:
+  #     - key: NODE_ENV
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: sketchbook-pro-db
+  #         property: connectionString
+
+  # ---------------------------------------------------------------------------
+  # Python AI & Processing Microservice (FastAPI + PyTorch)
+  # Uncomment and configure when backend-python service is added
+  # ---------------------------------------------------------------------------
+  # - type: web
+  #   name: sketchbook-pro-backend-ai
+  #   env: python
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+  #   envVars:
+  #     - key: PYTHON_VERSION
+  #       value: 3.11.0
+
+# ---------------------------------------------------------------------------
+# Databases (PostgreSQL)
+# Uncomment when database instance is required
+# ---------------------------------------------------------------------------
+# databases:
+#   - name: sketchbook-pro-db
+#     databaseName: sketchbook_pro
+#     user: sketchbook_user
+#     plan: starter
