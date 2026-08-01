@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   type DocumentModel,
   type LayerNode,
@@ -10,6 +10,7 @@ import {
   type Command,
   type VectorAnchor,
   type ImageNode,
+  type Mesh3DData,
 } from './state/document';
 import {
   InputNormalizer,
@@ -26,6 +27,15 @@ import type { PenToolAction } from './engine/vector/PenTool';
 import { BooleanOps } from './engine/vector/BooleanOps';
 import { BezierMath } from './engine/vector/BezierMath';
 import { TextToolOverlay } from './components/TextToolOverlay';
+import { TierSwitcher, type TierLevel } from './components/TierSwitcher';
+import { AnimationWorkspace } from './components/AnimationWorkspace';
+import { RareWorkspace } from './components/RareWorkspace';
+import { LegendaryWorkspace } from './components/LegendaryWorkspace';
+import { storageEngine } from './state/storage';
+import { PDFEngine, type PDFExportOptions } from './engine/pdf/PDFEngine';
+
+
+
 
 export const FONT_OPTIONS = [
   { name: 'Inter', family: 'Inter, sans-serif' },
@@ -386,10 +396,125 @@ interface DrawingPage {
   checkedLines?: Record<number, boolean>;
 }
 
+interface TutorialStep {
+  title: string;
+  badge: string;
+  description: string;
+  details: string[];
+}
+
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    title: 'Tier Workspace Router',
+    badge: 'Step 1 of 10 · Workspace Level Switcher',
+    description: 'Sketchbook Pro features 4 specialized level workspaces that share a unified document & layer stack.',
+    details: [
+      'Common Level: 2D Vector/Raster drawing, PDF import/inking & active area export.',
+      'Animation Level: 2D Timeline, frame-by-frame onion skinning & stylus pressure.',
+      'Rare Level: WebGL 3D Wavefront OBJ mesh viewer, NumPy volume tensors & Industry Shader Suite.',
+      'Legendary Level: PyTorch AI Models (SAM Segmentation, U2-Net, Real-ESRGAN) & Y.js Collab.'
+    ]
+  },
+  {
+    title: 'Import PDF & Page Photos',
+    badge: 'Step 2 of 10 · Document Importer',
+    description: 'Import multi-page PDF files or page photos directly onto your drawing canvas.',
+    details: [
+      'Converts PDF pages into document background layers using client-side PDF.js.',
+      'Automatically activates drawing tools so you can draw, paint, write text notes, and annotate directly on top of the PDF!'
+    ]
+  },
+  {
+    title: 'Interactive PDF Exporter',
+    badge: 'Step 3 of 10 · PDF Export Options',
+    description: 'Export your artwork, drawings, and annotations into a clean binary PDF document.',
+    details: [
+      'Layer Selection: Filter visible layers (All Visible, Vector Only, Text Only, Raster Only).',
+      'Page Bounds: Export Active Content Area or Full Canvas Workspace.',
+      'Print Quality: Select 300 DPI HD or 150 DPI Standard resolution.'
+    ]
+  },
+  {
+    title: 'Active Content Area PNG Export',
+    badge: 'Step 4 of 10 · PNG Image Export',
+    description: 'Export your multi-layer drawing as a high-resolution PNG image.',
+    details: [
+      'Automatically trims away empty space around drawn content.',
+      'Exports at exact content pixel dimensions without forced upscaling caps.'
+    ]
+  },
+  {
+    title: 'Smart Canvas & Camera Tour Loop',
+    badge: 'Step 5 of 10 · Telemetry & Inspection',
+    description: 'Real-time spatial telemetry scanner & dynamic hands-free camera inspection tour loop.',
+    details: [
+      'Tracks active content bounds, pixel dimensions, layer counts, and text notes.',
+      'Click "Focus & Tour Content Camera" to run a hands-free tour looping through all your worked regions!'
+    ]
+  },
+  {
+    title: 'Studio Drawing Tools',
+    badge: 'Step 6 of 10 · Left Toolbar',
+    description: 'Choose your active drawing mode from the left toolbar.',
+    details: [
+      'Brush (B): Freehand raster painting & stylus inking.',
+      'Eraser (E): Pixel-perfect raster erasing.',
+      'Pen (P): Vector Bezier curve path drawing.',
+      'Text (T): Interactive text notes & annotations.',
+      'Select (V): Move, scale, & transform elements across layers.',
+      'Crop (C): High-contrast canvas cropping box.'
+    ]
+  },
+  {
+    title: 'Absolute Screen-Space Brush Sizing',
+    badge: 'Step 7 of 10 · Brush Controls',
+    description: 'Customize brush size, color, opacity, and brush presets.',
+    details: [
+      'Absolute Sizing: Whether canvas zoom is 5%, 50%, 100%, or 200%, your brush stroke maintains the exact same visual pixel width selected on the sidebar slider!',
+      'Presets: Pencil, Airbrush, Technical Pen, Ink Marker, Chalk.'
+    ]
+  },
+  {
+    title: 'Layer Manager & Blend Modes',
+    badge: 'Step 8 of 10 · Right Layer Panel',
+    description: 'Manage raster paint, vector line art, text notes, and imported PDF layers.',
+    details: [
+      'Organize layer hierarchy, toggle visibility, and adjust opacity.',
+      'Apply blend modes (Normal, Multiply, Screen, Overlay, Darken, Lighten).',
+      'Add new raster paint layers or vector illustration layers.'
+    ]
+  },
+  {
+    title: 'Unrestricted Infinite Canvas',
+    badge: 'Step 9 of 10 · Canvas Stage',
+    description: 'Drawing canvas with infinite expansion in all directions.',
+    details: [
+      'Pan: Middle-mouse click & drag, or hold Spacebar + drag.',
+      'Zoom: Mouse wheel scroll (0.1x to 8.0x zoom).',
+      'Graphics Tablet Support: Pressure-sensitive stylus input (Wacom, iPad/Pencil, Surface).'
+    ]
+  },
+  {
+    title: '500ms Debounced Auto-Save',
+    badge: 'Step 10 of 10 · Offline Storage',
+    description: 'Your creative work is automatically protected.',
+    details: [
+      'Every stroke, vector curve, text edit, and PDF layer is saved to IndexedDB within 500ms.',
+      'Restores your document state automatically if you reload or switch tier workspaces.'
+    ]
+  }
+];
+
 // ─────────────────────────────────────────────────────────────
 // Main App
 // ─────────────────────────────────────────────────────────────
 export default function App() {
+  // Interactive Onboarding Tutorial State
+  const [tutorialActive, setTutorialActive] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  // Use Case Tier Level ('common' | 'rare' | 'legendary')
+  const [tierLevel, setTierLevel] = useState<TierLevel>('common');
+
   // Viewport
   const [transform, setTransform] = useState<ViewportTransform>({ zoom: 1, panX: 0, panY: 0, rotation: 0 });
   const [vpSize, setVpSize] = useState({ w: 800, h: 600 });
@@ -397,12 +522,12 @@ export default function App() {
 
   // Canvas Settings (OkSo style infinite mode support)
   const [showPageBorder, setShowPageBorder] = useState(false); // default false for infinite canvas
-  const [bgTheme, setBgTheme] = useState<'dark' | 'light'>('dark');
+  const [bgTheme, setBgTheme] = useState<'dark' | 'light'>('light');
 
   // Drawing Pages (OkSo style nested pages structure)
   const [pages, setPages] = useState<DrawingPage[]>([]);
   const [activePageId, setActivePageId] = useState<string>('default-page');
-  const [pageFormat, setPageFormat] = useState<'blank' | 'lined' | 'grid' | 'dotted' | 'checklist'>('blank');
+  const [pageFormat, setPageFormat] = useState<'blank' | 'lined' | 'grid' | 'dotted' | 'checklist'>('dotted');
   const [checkedLines, setCheckedLines] = useState<Record<number, boolean>>({});
 
   // Add Page Modal
@@ -465,7 +590,55 @@ export default function App() {
   const cropStartRef = useRef({ x: 0, y: 0 });
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
-  // Text
+  // 3D Mesh & Volume Tensor persistence across tiers
+  const [loaded3DMesh, setLoaded3DMesh] = useState<Mesh3DData | null>(null);
+
+  // PDF Import & Interactive Export State
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfExportOptions, setPdfExportOptions] = useState<PDFExportOptions>({
+    layerSelection: 'all',
+    pageArea: 'active_content',
+    orientation: 'auto',
+    resolutionDPI: 300,
+    pdfTitle: 'Sketchbook_Pro_Artwork',
+    author: 'Artist',
+  });
+  const [pdfStatusMsg, setPdfStatusMsg] = useState<string | null>(null);
+
+  // Content Camera Tour Loop State
+  const [isTouringCamera, setIsTouringCamera] = useState(false);
+  const [tourIndex, setTourIndex] = useState(0);
+  const initialViewportRef = useRef<ViewportTransform | null>(null);
+
+  const importPDFFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const { newLayer } = await PDFEngine.importPDFPageToLayer(file, CANVAS_W, CANVAS_H);
+      setLayers(prev => [...prev, newLayer]);
+      setActiveLayerId(newLayer.id);
+      setTool('brush');
+      redraw();
+      setPdfStatusMsg(`Imported PDF (${file.name}) as layer! You can draw, paint & annotate on top.`);
+    } catch {
+      alert('Failed to import PDF document page.');
+    }
+  };
+
+  const executePDFExport = async () => {
+    try {
+      const blob = await PDFEngine.exportPDFWithOptions(layers, CANVAS_W, CANVAS_H, pdfExportOptions);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${pdfExportOptions.pdfTitle.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setPdfModalOpen(false);
+    } catch {
+      alert('Failed to generate PDF document.');
+    }
+  };
   const [textOv, setTextOv] = useState<{ x: number; y: number; layerId: string; text?: string } | null>(null);
   const [tSize, setTSize] = useState(28);
   const [tColor, setTColor] = useState('#1a1a1a');
@@ -668,14 +841,60 @@ export default function App() {
       }
     }
 
-    // Draw crop box outline
+    // Draw crop box outline with high contrast for light/dark themes & corner handles
     if (tool === 'crop' && cropBox) {
       ctx.save();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2 / transform.zoom;
-      ctx.setLineDash([6 / transform.zoom, 6 / transform.zoom]);
+
+      // 1. Semi-transparent mask outside crop area
+      ctx.fillStyle = bgTheme === 'light' ? 'rgba(0, 0, 0, 0.25)' : 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(0, 0, CANVAS_W, cropBox.y);
+      ctx.fillRect(0, cropBox.y + cropBox.h, CANVAS_W, CANVAS_H - (cropBox.y + cropBox.h));
+      ctx.fillRect(0, cropBox.y, cropBox.x, cropBox.h);
+      ctx.fillRect(cropBox.x + cropBox.w, cropBox.y, CANVAS_W - (cropBox.x + cropBox.w), cropBox.h);
+
+      // 2. High-contrast crop outline
+      const strokeColor = bgTheme === 'light' ? '#2563eb' : '#38bdf8';
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2.5 / transform.zoom;
       ctx.strokeRect(cropBox.x, cropBox.y, cropBox.w, cropBox.h);
-      ctx.setLineDash([]);
+
+      // 3. Corner Handles
+      const handleSize = 10 / transform.zoom;
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2 / transform.zoom;
+
+      const corners = [
+        { x: cropBox.x, y: cropBox.y },
+        { x: cropBox.x + cropBox.w, y: cropBox.y },
+        { x: cropBox.x, y: cropBox.y + cropBox.h },
+        { x: cropBox.x + cropBox.w, y: cropBox.y + cropBox.h },
+      ];
+
+      corners.forEach(c => {
+        ctx.fillRect(c.x - handleSize / 2, c.y - handleSize / 2, handleSize, handleSize);
+        ctx.strokeRect(c.x - handleSize / 2, c.y - handleSize / 2, handleSize, handleSize);
+      });
+
+      // 4. Dimension Badge
+      ctx.fillStyle = bgTheme === 'light' ? '#1e293b' : '#0f172a';
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 1 / transform.zoom;
+      const badgeText = `${Math.round(cropBox.w)} × ${Math.round(cropBox.h)} px`;
+      ctx.font = `600 ${Math.max(11, 13 / transform.zoom)}px Inter, sans-serif`;
+      const textWidth = ctx.measureText(badgeText).width;
+      const badgeW = textWidth + 16 / transform.zoom;
+      const badgeH = 22 / transform.zoom;
+      const badgeX = cropBox.x + cropBox.w / 2 - badgeW / 2;
+      const badgeY = cropBox.y - badgeH - 6 / transform.zoom;
+
+      ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+      ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeText, cropBox.x + cropBox.w / 2, badgeY + badgeH / 2);
+
       ctx.restore();
     }
 
@@ -692,11 +911,19 @@ export default function App() {
     redraw();
   }, [vpSize]);
 
-  // Measure viewport container
+  // Measure viewport container & calculate initial fit
+  const initialFitDoneRef = useRef(false);
   useEffect(() => {
     const measure = () => {
       const el = vpRef.current;
-      if (el) setVpSize({ w: el.clientWidth, h: el.clientHeight });
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+        setVpSize({ w: el.clientWidth, h: el.clientHeight });
+        if (!initialFitDoneRef.current) {
+          initialFitDoneRef.current = true;
+          const fitZoom = Math.min(el.clientWidth / CANVAS_W, el.clientHeight / CANVAS_H) * 0.88;
+          setTransform({ zoom: Math.max(0.2, fitZoom), panX: 0, panY: 0, rotation: 0 });
+        }
+      }
     };
     const ro = new ResizeObserver(measure);
     if (vpRef.current) ro.observe(vpRef.current);
@@ -715,6 +942,47 @@ export default function App() {
 
   // Redraw on change
   useEffect(() => { redraw(); }, [redraw]);
+
+  // Auto-Save Document Cache to IndexedDB
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (layers.length > 0) {
+        storageEngine.saveDocumentCache({
+          id: 'current-auto-save',
+          updatedAt: Date.now(),
+          activeTier: tierLevel,
+          activePageId: activePageId,
+          pages: pages,
+          layers: layers.map(l => ({
+            id: l.id,
+            name: l.name,
+            type: l.type,
+            visible: l.visible,
+            opacity: l.opacity,
+            blendMode: l.blendMode,
+            clipping: l.clipping,
+            parentId: l.parentId,
+            vectorPaths: l.vectorPaths,
+            textNode: l.textNode,
+            imageNode: l.imageNode,
+          })),
+          activeLayerId: activeLayerId,
+        });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [layers, activeLayerId, pages, activePageId, tierLevel]);
+
+  // Load Auto-Saved Document Cache on Initial Mount
+  useEffect(() => {
+    storageEngine.loadDocumentCache().then(cache => {
+      if (cache && cache.layers && cache.layers.length > 0) {
+        setTierLevel(cache.activeTier || 'common');
+        if (cache.pages && cache.pages.length > 0) setPages(cache.pages);
+        if (cache.activePageId) setActivePageId(cache.activePageId);
+      }
+    });
+  }, []);
 
   // Close Add Page Modal on Esc key
   useEffect(() => {
@@ -1227,149 +1495,174 @@ export default function App() {
       return;
     }
 
-    // ── Select / Transform tool
+    // ── Select / Transform tool (Full Element Drag & Repositioning)
     if (tool === 'select') {
-      if (!al) return;
+      const visibleLayers = [...layers].filter(l => l.visible).reverse();
+      let hitFound = false;
 
-      // Handle Text layer repositioning
-      if (al.type === 'text' && al.textNode) {
-        const tn = al.textNode;
-        const textWidth = tn.text.length * tn.fontSize * 0.6;
-        const textHeight = tn.fontSize;
-        if (x >= tn.x - 20 && x <= tn.x + textWidth && y >= tn.y - textHeight && y <= tn.y + 10) {
-          setDraggingText(true);
-          dragStartRef.current = { x, y };
-          textSnapRef.current = { ...tn };
-          canvas.setPointerCapture(e.pointerId);
-          return;
-        }
-      }
-
-      // Handle Image layer repositioning & Scaling handles
-      if (al.type === 'image' && al.imageNode) {
-        const node = al.imageNode;
-        const bbox = { x: node.x, y: node.y, w: node.width, h: node.height };
-        historyImageSnapRef.current = { [al.id]: { ...node } };
-
-        // Hit test corners for scaling
-        const hitHandle = getHitHandle(bbox, x, y, transform.zoom);
-        if (hitHandle) {
-          setDraggingHandle(hitHandle);
-          initialBBoxRef.current = bbox;
-          imageSnapRef.current = { ...node };
-          canvas.setPointerCapture(e.pointerId);
-          return;
-        }
-
-        // Drag whole image
-        if (x >= node.x && x <= node.x + node.width && y >= node.y && y <= node.y + node.height) {
-          setDraggingImage(true);
-          dragStartRef.current = { x, y };
-          imageSnapRef.current = { ...node };
-          canvas.setPointerCapture(e.pointerId);
-          return;
-        }
-      }
-
-      // Handle Vector path editing & scaling
-      if (al.type === 'vector' && al.vectorPaths) {
-        historyPathSnapRef.current = { [al.id]: JSON.parse(JSON.stringify(al.vectorPaths)) };
-
-        // 1. Check scaling handles if paths are selected
-        if (selPaths.size > 0) {
-          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-          let count = 0;
-          for (const pathId of selPaths) {
-            const p = al.vectorPaths.find(xx => xx.id === pathId);
-            if (p) {
-              count++;
-              const b = getPathBoundingBox(p);
-              minX = Math.min(minX, b.x);
-              minY = Math.min(minY, b.y);
-              maxX = Math.max(maxX, b.x + b.w);
-              maxY = Math.max(maxY, b.y + b.h);
-            }
-          }
-          if (count > 0) {
-            const unionBBox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-            const hitHandle = getHitHandle(unionBBox, x, y, transform.zoom);
-            if (hitHandle) {
-              setDraggingHandle(hitHandle);
-              initialBBoxRef.current = unionBBox;
-              const snap: Record<string, VectorAnchor[]> = {};
-              al.vectorPaths.forEach(p => {
-                if (selPaths.has(p.id)) snap[p.id] = JSON.parse(JSON.stringify(p.anchors));
-              });
-              pathSnapRef.current = snap;
-              canvas.setPointerCapture(e.pointerId);
-              return;
-            }
+      for (const l of visibleLayers) {
+        // 1. Check Text Layer
+        if (l.type === 'text' && l.textNode) {
+          const tn = l.textNode;
+          const textWidth = Math.max(100, tn.text.length * tn.fontSize * 0.6);
+          const textHeight = Math.max(tn.fontSize, tn.text.split('\n').length * tn.fontSize * 1.3);
+          if (x >= tn.x - 20 && x <= tn.x + textWidth + 20 && y >= tn.y - 20 && y <= tn.y + textHeight + 20) {
+            setActiveLayerId(l.id);
+            setDraggingText(true);
+            dragStartRef.current = { x, y };
+            textSnapRef.current = { ...tn };
+            canvas.setPointerCapture(e.pointerId);
+            hitFound = true;
+            break;
           }
         }
 
-        // 2. Check if clicked on an anchor or handle of an already selected path
-        if (selPaths.size > 0) {
-          for (const pathId of selPaths) {
-            const path = al.vectorPaths.find(p => p.id === pathId);
-            if (path) {
-              const hitRadius = 8 / transform.zoom;
-              for (let i = 0; i < path.anchors.length; i++) {
-                const a = path.anchors[i];
-                if (Math.hypot(a.x - x, a.y - y) <= hitRadius) {
-                  setSelAnchor({ pathId, index: i });
-                  setSelHandleType(null);
-                  setDraggingPath(false);
-                  dragStartRef.current = { x, y };
-                  canvas.setPointerCapture(e.pointerId);
-                  return;
-                }
-                if (Math.hypot(a.x + a.handleIn.x - x, a.y + a.handleIn.y - y) <= hitRadius) {
-                  setSelAnchor({ pathId, index: i });
-                  setSelHandleType('in');
-                  setDraggingPath(false);
-                  dragStartRef.current = { x, y };
-                  canvas.setPointerCapture(e.pointerId);
-                  return;
-                }
-                if (Math.hypot(a.x + a.handleOut.x - x, a.y + a.handleOut.y - y) <= hitRadius) {
-                  setSelAnchor({ pathId, index: i });
-                  setSelHandleType('out');
-                  setDraggingPath(false);
-                  dragStartRef.current = { x, y };
-                  canvas.setPointerCapture(e.pointerId);
-                  return;
-                }
+        // 2. Check Image Layer
+        if (l.type === 'image' && l.imageNode) {
+          const node = l.imageNode;
+          const bbox = { x: node.x, y: node.y, w: node.width, h: node.height };
+          const hitHandle = getHitHandle(bbox, x, y, transform.zoom);
+          if (hitHandle) {
+            setActiveLayerId(l.id);
+            setDraggingHandle(hitHandle);
+            initialBBoxRef.current = bbox;
+            imageSnapRef.current = { ...node };
+            historyImageSnapRef.current = { [l.id]: { ...node } };
+            canvas.setPointerCapture(e.pointerId);
+            hitFound = true;
+            break;
+          }
+          if (x >= node.x && x <= node.x + node.width && y >= node.y && y <= node.y + node.height) {
+            setActiveLayerId(l.id);
+            setDraggingImage(true);
+            dragStartRef.current = { x, y };
+            imageSnapRef.current = { ...node };
+            historyImageSnapRef.current = { [l.id]: { ...node } };
+            canvas.setPointerCapture(e.pointerId);
+            hitFound = true;
+            break;
+          }
+        }
+
+        // 3. Check Vector Layer
+        if (l.type === 'vector' && l.vectorPaths && l.vectorPaths.length > 0) {
+          historyPathSnapRef.current = { [l.id]: JSON.parse(JSON.stringify(l.vectorPaths)) };
+
+          // Check if clicking inside bounding box of previously selected path(s) to scale or move
+          if (l.id === activeLayerId && selPaths.size > 0) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            let count = 0;
+            for (const pathId of selPaths) {
+              const p = l.vectorPaths.find(xx => xx.id === pathId);
+              if (p) {
+                count++;
+                const b = getPathBoundingBox(p);
+                minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+                maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+              }
+            }
+            if (count > 0) {
+              const unionBBox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+              const hitHandle = getHitHandle(unionBBox, x, y, transform.zoom);
+              if (hitHandle) {
+                setDraggingHandle(hitHandle);
+                initialBBoxRef.current = unionBBox;
+                const snap: Record<string, VectorAnchor[]> = {};
+                l.vectorPaths.forEach(p => {
+                  if (selPaths.has(p.id)) snap[p.id] = JSON.parse(JSON.stringify(p.anchors));
+                });
+                pathSnapRef.current = snap;
+                canvas.setPointerCapture(e.pointerId);
+                hitFound = true;
+                break;
+              }
+
+              // Drag whole selected vector path group
+              if (x >= unionBBox.x - 10 && x <= unionBBox.x + unionBBox.w + 10 && y >= unionBBox.y - 10 && y <= unionBBox.y + unionBBox.h + 10) {
+                setDraggingPath(true);
+                dragStartRef.current = { x, y };
+                const snap: Record<string, VectorAnchor[]> = {};
+                l.vectorPaths.forEach(p => {
+                  if (selPaths.has(p.id)) snap[p.id] = JSON.parse(JSON.stringify(p.anchors));
+                });
+                pathSnapRef.current = snap;
+                canvas.setPointerCapture(e.pointerId);
+                hitFound = true;
+                break;
               }
             }
           }
-        }
 
-        // 3. Hit test path outlines to select
-        const hitPath = [...al.vectorPaths].reverse().find(p => BezierMath.hitTestVectorPath(p, x, y, 10 / transform.zoom));
-        if (hitPath) {
-          const newSel = new Set(e.shiftKey ? selPaths : []);
-          if (newSel.has(hitPath.id)) {
-            newSel.delete(hitPath.id);
-          } else {
-            newSel.add(hitPath.id);
+          // Check anchor hit testing on selected paths
+          if (l.id === activeLayerId && selPaths.size > 0) {
+            let anchorHit = false;
+            for (const pathId of selPaths) {
+              const path = l.vectorPaths.find(p => p.id === pathId);
+              if (path) {
+                const hitRadius = 10 / transform.zoom;
+                for (let i = 0; i < path.anchors.length; i++) {
+                  const a = path.anchors[i];
+                  if (Math.hypot(a.x - x, a.y - y) <= hitRadius) {
+                    setSelAnchor({ pathId, index: i });
+                    setSelHandleType(null);
+                    setDraggingPath(false);
+                    dragStartRef.current = { x, y };
+                    canvas.setPointerCapture(e.pointerId);
+                    anchorHit = true;
+                    hitFound = true;
+                    break;
+                  }
+                  if (Math.hypot(a.x + a.handleIn.x - x, a.y + a.handleIn.y - y) <= hitRadius) {
+                    setSelAnchor({ pathId, index: i });
+                    setSelHandleType('in');
+                    setDraggingPath(false);
+                    dragStartRef.current = { x, y };
+                    canvas.setPointerCapture(e.pointerId);
+                    anchorHit = true;
+                    hitFound = true;
+                    break;
+                  }
+                  if (Math.hypot(a.x + a.handleOut.x - x, a.y + a.handleOut.y - y) <= hitRadius) {
+                    setSelAnchor({ pathId, index: i });
+                    setSelHandleType('out');
+                    setDraggingPath(false);
+                    dragStartRef.current = { x, y };
+                    canvas.setPointerCapture(e.pointerId);
+                    anchorHit = true;
+                    hitFound = true;
+                    break;
+                  }
+                }
+                if (anchorHit) break;
+              }
+            }
+            if (anchorHit) break;
           }
-          setSelPaths(newSel);
-          setSelAnchor(null);
-          setSelHandleType(null);
-          setDraggingPath(true);
-          dragStartRef.current = { x, y };
 
-          const snap: Record<string, VectorAnchor[]> = {};
-          al.vectorPaths.forEach(p => {
-            if (newSel.has(p.id)) snap[p.id] = JSON.parse(JSON.stringify(p.anchors));
-          });
-          pathSnapRef.current = snap;
-          canvas.setPointerCapture(e.pointerId);
-          return;
+          // Hit test vector path stroke or fill to select and drag
+          const hitPath = [...l.vectorPaths].reverse().find(p => BezierMath.hitTestVectorPath(p, x, y, 12 / transform.zoom));
+          if (hitPath) {
+            setActiveLayerId(l.id);
+            const newSel = new Set(e.shiftKey ? selPaths : [hitPath.id]);
+            setSelPaths(newSel);
+            setSelAnchor(null);
+            setSelHandleType(null);
+            setDraggingPath(true);
+            dragStartRef.current = { x, y };
+
+            const snap: Record<string, VectorAnchor[]> = {};
+            l.vectorPaths.forEach(p => {
+              if (newSel.has(p.id)) snap[p.id] = JSON.parse(JSON.stringify(p.anchors));
+            });
+            pathSnapRef.current = snap;
+            canvas.setPointerCapture(e.pointerId);
+            hitFound = true;
+            break;
+          }
         }
       }
 
-      if (!e.shiftKey) {
+      if (!hitFound && !e.shiftKey) {
         setSelPaths(new Set());
         setSelAnchor(null);
         setSelHandleType(null);
@@ -1387,6 +1680,8 @@ export default function App() {
         return;
       }
 
+      const effectiveBrushSize = Math.max(0.5, size / Math.max(0.01, transform.zoom));
+
       if (al.type === 'vector') {
         if (shapeMode === 'freehand') {
           const pathId = `stroke-${Date.now()}`;
@@ -1401,20 +1696,20 @@ export default function App() {
             }],
             closed: false,
             strokeColor: color,
-            strokeWidth: size,
+            strokeWidth: effectiveBrushSize,
             fillColor: null,
             fillRule: 'nonzero'
           };
           livePathRef.current = newPath;
           drawOverlay();
         } else if (shapeMode === 'line') {
-          livePathRef.current = createLinePath(x, y, x, y, color, size);
+          livePathRef.current = createLinePath(x, y, x, y, color, effectiveBrushSize);
           drawOverlay();
         } else if (shapeMode === 'rect') {
-          livePathRef.current = createRectPath(x, y, x, y, color, size, vFill);
+          livePathRef.current = createRectPath(x, y, x, y, color, effectiveBrushSize, vFill);
           drawOverlay();
         } else if (shapeMode === 'circle') {
-          livePathRef.current = createEllipsePath(x, y, x, y, color, size, vFill);
+          livePathRef.current = createEllipsePath(x, y, x, y, color, effectiveBrushSize, vFill);
           drawOverlay();
         }
       } else if (al.type === 'raster') {
@@ -1423,7 +1718,7 @@ export default function App() {
 
         dirtyTilesRef.current.clear();
         const preset = brushPresets.find(p => p.id === presetId)!;
-        const activePreset = { ...preset, color, size, opacity };
+        const activePreset = { ...preset, color, size: effectiveBrushSize, opacity };
 
         const normIn = normRef.current.normalize(e.nativeEvent, canvas);
         const stabIn = stabRef.current.stabilize(normIn, stabSettings);
@@ -1442,13 +1737,13 @@ export default function App() {
           lastBrushInputRef.current = inp;
           redraw(dirtyTilesRef.current);
         } else if (shapeMode === 'line') {
-          livePathRef.current = createLinePath(cx, cy, cx, cy, color, size);
+          livePathRef.current = createLinePath(cx, cy, cx, cy, color, effectiveBrushSize);
           drawOverlay();
         } else if (shapeMode === 'rect') {
-          livePathRef.current = createRectPath(cx, cy, cx, cy, color, size, vFill);
+          livePathRef.current = createRectPath(cx, cy, cx, cy, color, effectiveBrushSize, vFill);
           drawOverlay();
         } else if (shapeMode === 'circle') {
-          livePathRef.current = createEllipsePath(cx, cy, cx, cy, color, size, vFill);
+          livePathRef.current = createEllipsePath(cx, cy, cx, cy, color, effectiveBrushSize, vFill);
           drawOverlay();
         }
       }
@@ -1463,8 +1758,9 @@ export default function App() {
       canvas.setPointerCapture(e.pointerId);
       dirtyTilesRef.current.clear();
 
+      const effectiveBrushSize = Math.max(0.5, size / Math.max(0.01, transform.zoom));
       const preset = brushPresets.find(p => p.id === presetId)!;
-      const activePreset = { ...preset, name: 'Eraser', color: '#000000', opacity: 1, size };
+      const activePreset = { ...preset, name: 'Eraser', color: '#000000', opacity: 1, size: effectiveBrushSize };
 
       const normIn = normRef.current.normalize(e.nativeEvent, canvas);
       const stabIn = stabRef.current.stabilize(normIn, stabSettings);
@@ -1681,6 +1977,8 @@ export default function App() {
     const tl = tilesRef.current.get(activeLayerId);
     if (!tl) return;
 
+    const effectiveBrushSize = Math.max(0.5, size / Math.max(0.01, transform.zoom));
+
     if (al && al.type === 'vector' && livePathRef.current) {
       if (shapeMode === 'freehand') {
         const lp = livePathRef.current;
@@ -1695,11 +1993,11 @@ export default function App() {
           });
         }
       } else if (shapeMode === 'line') {
-        livePathRef.current = createLinePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size);
+        livePathRef.current = createLinePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize);
       } else if (shapeMode === 'rect') {
-        livePathRef.current = createRectPath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size, vFill);
+        livePathRef.current = createRectPath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize, vFill);
       } else if (shapeMode === 'circle') {
-        livePathRef.current = createEllipsePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size, vFill);
+        livePathRef.current = createEllipsePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize, vFill);
       }
       drawOverlay();
       return;
@@ -1707,11 +2005,11 @@ export default function App() {
 
     if (al && al.type === 'raster' && shapeMode !== 'freehand' && livePathRef.current) {
       if (shapeMode === 'line') {
-        livePathRef.current = createLinePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size);
+        livePathRef.current = createLinePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize);
       } else if (shapeMode === 'rect') {
-        livePathRef.current = createRectPath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size, vFill);
+        livePathRef.current = createRectPath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize, vFill);
       } else if (shapeMode === 'circle') {
-        livePathRef.current = createEllipsePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, size, vFill);
+        livePathRef.current = createEllipsePath(dragStartRef.current.x, dragStartRef.current.y, x, y, color, effectiveBrushSize, vFill);
       }
       drawOverlay();
       return;
@@ -1725,8 +2023,8 @@ export default function App() {
 
     const preset = brushPresets.find(p => p.id === presetId)!;
     const activePreset = tool === 'eraser'
-      ? { ...preset, name: 'Eraser', color: '#000000', opacity: 1, size }
-      : { ...preset, color, size, opacity };
+      ? { ...preset, name: 'Eraser', color: '#000000', opacity: 1, size: effectiveBrushSize }
+      : { ...preset, color, size: effectiveBrushSize, opacity };
 
     const r = activePreset.size;
     const sx = Math.max(0, Math.floor((cx - r) / TiledLayer.TILE_SIZE));
@@ -2086,9 +2384,9 @@ export default function App() {
 
   // ── Export / Crop Export ──────────────────────────────────
   const exportPNG = async () => {
-    const blob = await ExportEngine.exportToBlob([...layers], CANVAS_W, CANVAS_H, 'image/png');
+    const blob = await ExportEngine.exportToBlob([...layers], CANVAS_W, CANVAS_H, 'image/png', 0.95, true, 1.0);
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'artwork.png'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = `active_artwork_${Date.now()}.png`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -2159,6 +2457,149 @@ export default function App() {
     });
   };
 
+  // ── Smart Canvas Intelligence Telemetry & Focus Camera ──
+  const smartContentBounds = useMemo(() => {
+    return ExportEngine.getContentBoundingBox(layers, CANVAS_W, CANVAS_H, 20);
+  }, [layers]);
+
+  const smartTelemetry = useMemo(() => {
+    let rasterCount = 0, vectorCount = 0, textCount = 0, imageCount = 0;
+    const textSnippets: string[] = [];
+    layers.forEach(l => {
+      if (!l.visible) return;
+      if (l.type === 'raster') rasterCount++;
+      if (l.type === 'vector') vectorCount++;
+      if (l.type === 'text') {
+        textCount++;
+        if (l.textNode?.text) textSnippets.push(`"${l.textNode.text.slice(0, 20)}..."`);
+      }
+      if (l.type === 'image') imageCount++;
+    });
+    return { rasterCount, vectorCount, textCount, imageCount, textSnippets };
+  }, [layers]);
+
+  // ── Smart Canvas Intelligence Work History Regions & Camera Tour ──
+  const workHistoryRegions = useMemo(() => {
+    const list: { name: string; bounds: { x: number; y: number; w: number; h: number } }[] = [];
+
+    // 1. Overall Active Artwork Bounding Box Overview
+    const overall = ExportEngine.getContentBoundingBox(layers, CANVAS_W, CANVAS_H, 20);
+    if (overall.w > 0 && overall.h > 0 && isFinite(overall.w)) {
+      list.push({ name: 'Active Content Bounding Area', bounds: overall });
+    }
+
+    // 2. Individual Worked Layer Regions
+    layers.forEach(l => {
+      if (!l.visible) return;
+
+      if (l.type === 'vector' && l.vectorPaths && l.vectorPaths.length > 0) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        l.vectorPaths.forEach(p => {
+          p.anchors.forEach(a => {
+            if (a.x < minX) minX = a.x;
+            if (a.y < minY) minY = a.y;
+            if (a.x > maxX) maxX = a.x;
+            if (a.y > maxY) maxY = a.y;
+          });
+        });
+        if (minX !== Infinity && isFinite(minX)) {
+          const w = Math.max(60, maxX - minX);
+          const h = Math.max(60, maxY - minY);
+          list.push({ name: `Vector Artwork (${l.name})`, bounds: { x: minX - 20, y: minY - 20, w: w + 40, h: h + 40 } });
+        }
+      }
+
+      if (l.type === 'text' && l.textNode) {
+        list.push({
+          name: `Text Note ("${l.textNode.text.slice(0, 15)}...")`,
+          bounds: { x: l.textNode.x - 20, y: l.textNode.y - 20, w: 240, h: (l.textNode.fontSize || 24) * 2 + 40 }
+        });
+      }
+
+      if (l.type === 'image' && l.imageNode) {
+        list.push({
+          name: `Imported Media (${l.name})`,
+          bounds: { x: l.imageNode.x - 20, y: l.imageNode.y - 20, w: l.imageNode.width + 40, h: l.imageNode.height + 40 }
+        });
+      }
+
+      if (l.type === 'raster') {
+        const tl = tilesRef.current.get(l.id);
+        if (tl && tl.tiles.size > 0) {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          tl.tiles.forEach((_, key) => {
+            const [tx, ty] = key.split(',').map(Number);
+            minX = Math.min(minX, tx * TiledLayer.TILE_SIZE);
+            minY = Math.min(minY, ty * TiledLayer.TILE_SIZE);
+            maxX = Math.max(maxX, (tx + 1) * TiledLayer.TILE_SIZE);
+            maxY = Math.max(maxY, (ty + 1) * TiledLayer.TILE_SIZE);
+          });
+          if (minX !== Infinity && isFinite(minX)) {
+            list.push({
+              name: `Paint Strokes (${l.name})`,
+              bounds: { x: minX - 20, y: minY - 20, w: (maxX - minX) + 40, h: (maxY - minY) + 40 }
+            });
+          }
+        }
+      }
+    });
+
+    return list;
+  }, [layers]);
+
+  // Toggle or Focus Camera Tour Loop
+  const toggleContentCameraTour = () => {
+    if (isTouringCamera) {
+      // Stop Camera Tour & return directly to active working position
+      setIsTouringCamera(false);
+      if (initialViewportRef.current) {
+        setTransform(initialViewportRef.current);
+      }
+    } else {
+      // Start Camera Tour Loop
+      initialViewportRef.current = { ...transform };
+      setTourIndex(0);
+      setIsTouringCamera(true);
+    }
+  };
+
+  // Camera Tour Step Interval Loop
+  useEffect(() => {
+    if (!isTouringCamera || workHistoryRegions.length === 0) return;
+
+    // Tour targets include all worked regions, followed by returning to active working position!
+    const targets = [
+      ...workHistoryRegions,
+      { name: 'Active Working Location', bounds: null }
+    ];
+
+    const currentTarget = targets[tourIndex % targets.length];
+    if (currentTarget) {
+      if (currentTarget.name === 'Active Working Location' && initialViewportRef.current) {
+        setTransform(initialViewportRef.current);
+      } else if (currentTarget.bounds) {
+        const bounds = currentTarget.bounds;
+        const zoomX = vpSize.w / (bounds.w + 140);
+        const zoomY = vpSize.h / (bounds.h + 140);
+        const newZoom = Math.min(2.5, Math.max(0.2, Math.min(zoomX, zoomY)));
+        const centerX = bounds.x + bounds.w / 2;
+        const centerY = bounds.y + bounds.h / 2;
+        setTransform({
+          zoom: newZoom,
+          panX: (vpSize.w / 2) - centerX * newZoom,
+          panY: (vpSize.h / 2) - centerY * newZoom,
+          rotation: 0
+        });
+      }
+    }
+
+    const timer = setTimeout(() => {
+      setTourIndex(prev => (prev + 1) % targets.length);
+    }, 2800);
+
+    return () => clearTimeout(timer);
+  }, [isTouringCamera, tourIndex, workHistoryRegions, vpSize]);
+
   // Derived
   const activeLayer = layers.find(l => l.id === activeLayerId) ?? null;
   const cursorStyle = tool === 'pan' ? 'grab' : tool === 'text' ? 'text' : (tool === 'select' || tool === 'crop') ? 'default' : 'crosshair';
@@ -2174,6 +2615,9 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-brand">Sketch<span>Pro</span></div>
 
+          {/* Use Case Tier Level Switcher (Common, Rare, Legendary) */}
+          <TierSwitcher currentTier={tierLevel} onTierChange={setTierLevel} />
+
           <div className="topbar-center">
             <span>{Math.round(transform.zoom * 100)}%</span>
             <span className="text-dim">·</span>
@@ -2185,17 +2629,124 @@ export default function App() {
 
           <div className="topbar-right">
             <button className="btn btn-ghost" onClick={() => setZenMode(true)} style={{ marginRight: 8 }}>Zen Mode</button>
+
+            {/* Import PDF or Photo Page to Draw On */}
+            <label className="btn" style={{ background: '#2563eb', color: '#ffffff', marginRight: 6 }}>
+              Import PDF / Photo
+              <input type="file" accept=".pdf, image/*" style={{ display: 'none' }} onChange={importPDFFile} />
+            </label>
+
             <label className="btn">
               Open
               <input type="file" accept=".artstudio" style={{ display: 'none' }} onChange={loadProject} />
             </label>
+
             <button className="btn" onClick={saveProject}>Save</button>
             <button className="btn btn-accent" onClick={exportPNG}>Export PNG</button>
+
+            {/* Export PDF Document with Custom User Selection */}
+            <button className="btn btn-accent" style={{ background: '#4f46e5', color: '#ffffff', marginLeft: 6 }} onClick={() => setPdfModalOpen(true)}>
+              Export PDF
+            </button>
+
+            {/* Interactive Tutorial Onboarding Guide */}
+            <button
+              className="btn btn-accent"
+              style={{ background: '#6366f1', color: '#ffffff', fontWeight: 600, marginLeft: 6 }}
+              onClick={() => { setTutorialStep(0); setTutorialActive(true); }}
+            >
+              Tutorial
+            </button>
           </div>
         </header>
       )}
 
-      <div className="app-middle">
+      {/* Smart Canvas Intelligence Telemetry Banner */}
+      {!zenMode && tierLevel === 'common' && (
+        <div className="smart-canvas-bar" style={{ background: '#121215', borderBottom: '1px solid #27272a', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: '#a1a1aa' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span style={{ background: '#18181b', color: '#818cf8', border: '1px solid #27272a', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+              SMART CANVAS INTELLIGENCE
+            </span>
+            <span>
+              Active Area: <strong>{smartContentBounds.w}×{smartContentBounds.h}px</strong> @ ({smartContentBounds.x}, {smartContentBounds.y})
+            </span>
+            <span className="text-dim">·</span>
+            <span>
+              Layers: <strong>{smartTelemetry.rasterCount} Raster</strong>, <strong>{smartTelemetry.vectorCount} Vector</strong>, <strong>{smartTelemetry.textCount} Text</strong>, <strong>{smartTelemetry.imageCount} Image</strong>
+            </span>
+            {pdfStatusMsg && (
+              <>
+                <span className="text-dim">·</span>
+                <span style={{ color: '#10b981', fontWeight: 600 }}>{pdfStatusMsg}</span>
+              </>
+            )}
+            {smartTelemetry.textSnippets.length > 0 && (
+              <>
+                <span className="text-dim">·</span>
+                <span>Written: <em style={{ color: '#e4e4e7' }}>{smartTelemetry.textSnippets.join(', ')}</em></span>
+              </>
+            )}
+            {isTouringCamera && (
+              <>
+                <span className="text-dim">·</span>
+                <span style={{ color: '#818cf8', fontWeight: 600 }}>
+                  CAMERA TOUR ({tourIndex % (workHistoryRegions.length + 1) + 1}/{workHistoryRegions.length + 1}): {workHistoryRegions[tourIndex % (workHistoryRegions.length + 1)]?.name || 'Active Working Position'}
+                </span>
+              </>
+            )}
+          </div>
+          <button
+            className="btn btn-xs btn-accent"
+            style={{
+              background: isTouringCamera ? '#ef4444' : '#27272a',
+              color: '#fff',
+              border: '1px solid #3f3f46',
+              fontWeight: 600,
+            }}
+            onClick={toggleContentCameraTour}
+          >
+            {isTouringCamera ? 'Stop Camera Tour' : 'Focus & Tour Content Camera'}
+          </button>
+        </div>
+      )}
+
+      {/* ── Tier Level Workspace Router ── */}
+      {tierLevel === 'animation' ? (
+        <AnimationWorkspace
+          layers={layers}
+          setLayers={setLayers}
+          activeLayerId={activeLayerId}
+          setActiveLayerId={setActiveLayerId}
+          redraw={redraw}
+          CANVAS_W={CANVAS_W}
+          CANVAS_H={CANVAS_H}
+          onReturnToCommon={() => setTierLevel('common')}
+        />
+      ) : tierLevel === 'rare' ? (
+        <RareWorkspace
+          layers={layers}
+          CANVAS_W={CANVAS_W}
+          CANVAS_H={CANVAS_H}
+          redraw={redraw}
+          onReturnToCommon={() => setTierLevel('common')}
+          loaded3DMesh={loaded3DMesh}
+          setLoaded3DMesh={setLoaded3DMesh}
+        />
+      ) : tierLevel === 'legendary' ? (
+        <LegendaryWorkspace
+          layers={layers}
+          setLayers={setLayers}
+          redraw={redraw}
+          CANVAS_W={CANVAS_W}
+          CANVAS_H={CANVAS_H}
+          onReturnToCommon={() => setTierLevel('common')}
+          loaded3DMesh={loaded3DMesh}
+        />
+      ) : (
+        /* ── Common Level Interface (Default Core Studio) ── */
+        <>
+          <div className="app-middle">
         {/* ── Tool Strip ── */}
         {!zenMode && (
           <div className="tool-strip">
@@ -2728,6 +3279,8 @@ export default function App() {
           </div>
         </footer>
       )}
+        </>
+      )}
 
       {/* ── Custom Add Page Modal (Matte Black Design) ── */}
       {addPageModal && (
@@ -2819,6 +3372,169 @@ export default function App() {
                 >
                   Create
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive PDF Export Configuration Modal */}
+      {pdfModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#18181b', border: '1px solid #27272a', borderRadius: 8, padding: 24, width: 460, color: '#e4e4e7' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, borderBottom: '1px solid #27272a', paddingBottom: 10, margin: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>📄 EXPORT PDF CONFIGURATION</span>
+              <span style={{ fontSize: 10, color: '#a1a1aa' }}>Sketchbook Pro PDF Engine</span>
+            </h3>
+
+            <div style={{ marginTop: 16 }}>
+              <label style={{ fontSize: 11, color: '#a1a1aa', fontWeight: 600 }}>PDF Document Title</label>
+              <input
+                type="text"
+                value={pdfExportOptions.pdfTitle}
+                onChange={e => setPdfExportOptions(p => ({ ...p, pdfTitle: e.target.value }))}
+                style={{ width: '100%', background: '#09090b', color: '#fff', border: '1px solid #27272a', borderRadius: 4, padding: '6px 10px', marginTop: 4, fontSize: 12 }}
+              />
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={{ fontSize: 11, color: '#a1a1aa', fontWeight: 600 }}>What layers would you like to include?</label>
+              <select
+                value={pdfExportOptions.layerSelection}
+                onChange={e => setPdfExportOptions(p => ({ ...p, layerSelection: e.target.value as any }))}
+                style={{ width: '100%', background: '#09090b', color: '#fff', border: '1px solid #27272a', borderRadius: 4, padding: '6px 10px', marginTop: 4, fontSize: 12 }}
+              >
+                <option value="all">All Visible Layers (Raster Paint, Vector Lines, Images, Text)</option>
+                <option value="vector_only">Vector Paths & Line Art Only</option>
+                <option value="text_only">Text Notes & Annotations Only</option>
+                <option value="raster_only">Raster Paint Strokes Only</option>
+              </select>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={{ fontSize: 11, color: '#a1a1aa', fontWeight: 600 }}>Page Bounds Area</label>
+              <select
+                value={pdfExportOptions.pageArea}
+                onChange={e => setPdfExportOptions(p => ({ ...p, pageArea: e.target.value as any }))}
+                style={{ width: '100%', background: '#09090b', color: '#fff', border: '1px solid #27272a', borderRadius: 4, padding: '6px 10px', marginTop: 4, fontSize: 12 }}
+              >
+                <option value="active_content">Active Artwork Content Area (Trim empty space)</option>
+                <option value="full_canvas">Full Canvas Workspace Area</option>
+              </select>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label style={{ fontSize: 11, color: '#a1a1aa', fontWeight: 600 }}>Output Resolution & Quality</label>
+              <select
+                value={pdfExportOptions.resolutionDPI}
+                onChange={e => setPdfExportOptions(p => ({ ...p, resolutionDPI: parseInt(e.target.value) as any }))}
+                style={{ width: '100%', background: '#09090b', color: '#fff', border: '1px solid #27272a', borderRadius: 4, padding: '6px 10px', marginTop: 4, fontSize: 12 }}
+              >
+                <option value={300}>Print HD Quality (300 DPI)</option>
+                <option value={150}>Standard Quality (150 DPI)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 24, borderTop: '1px solid #27272a', paddingTop: 14 }}>
+              <button className="btn btn-ghost" onClick={() => setPdfModalOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-accent" style={{ background: '#2563eb', color: '#fff', fontWeight: 600 }} onClick={executePDFExport}>
+                Download PDF Document (.pdf)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ❓ Interactive Tutorial Onboarding Walkthrough Info Card Overlay */}
+      {tutorialActive && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.70)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 20 }}>
+          <div
+            style={{
+              background: '#18181b',
+              border: '2px solid #eab308',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 540,
+              width: '100%',
+              color: '#e4e4e7',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.9), 0 0 25px rgba(234, 179, 8, 0.3)',
+              position: 'relative'
+            }}
+          >
+            {/* Header Badge & Close Button */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <span style={{ background: '#eab308', color: '#000000', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 12, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                {TUTORIAL_STEPS[tutorialStep].badge}
+              </span>
+              <button
+                onClick={() => setTutorialActive(false)}
+                style={{ background: '#27272a', border: '1px solid #3f3f46', color: '#a1a1aa', borderRadius: 4, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14 }}
+                title="Skip & Close Tutorial"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Title */}
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#ffffff', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {TUTORIAL_STEPS[tutorialStep].title}
+            </h2>
+
+            {/* Description */}
+            <p style={{ fontSize: 13, color: '#d4d4d8', lineHeight: 1.6, marginBottom: 16 }}>
+              {TUTORIAL_STEPS[tutorialStep].description}
+            </p>
+
+            {/* Bullet Details Container */}
+            <div style={{ background: '#09090b', border: '1px solid #27272a', borderRadius: 8, padding: 14, marginBottom: 22 }}>
+              {TUTORIAL_STEPS[tutorialStep].details.map((detail, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 10, fontSize: 12, color: '#a1a1aa', marginBottom: idx === TUTORIAL_STEPS[tutorialStep].details.length - 1 ? 0 : 10, lineHeight: 1.5 }}>
+                  <span style={{ color: '#eab308', fontWeight: 700 }}>▸</span>
+                  <span>{detail}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Navigation Footer */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #27272a', paddingTop: 16 }}>
+              <button
+                className="btn btn-ghost"
+                style={{ color: '#a1a1aa', fontSize: 12 }}
+                onClick={() => setTutorialActive(false)}
+              >
+                Skip / Cancel
+              </button>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                {tutorialStep > 0 && (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ background: '#27272a', color: '#fff', fontSize: 12 }}
+                    onClick={() => setTutorialStep(prev => prev - 1)}
+                  >
+                    ← Back
+                  </button>
+                )}
+
+                {tutorialStep < TUTORIAL_STEPS.length - 1 ? (
+                  <button
+                    className="btn btn-accent"
+                    style={{ background: '#eab308', color: '#000000', fontWeight: 700, fontSize: 12 }}
+                    onClick={() => setTutorialStep(prev => prev + 1)}
+                  >
+                    Next ({tutorialStep + 1}/{TUTORIAL_STEPS.length}) →
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-accent"
+                    style={{ background: '#10b981', color: '#ffffff', fontWeight: 700, fontSize: 12 }}
+                    onClick={() => setTutorialActive(false)}
+                  >
+                    ✓ Finish Tutorial
+                  </button>
+                )}
               </div>
             </div>
           </div>

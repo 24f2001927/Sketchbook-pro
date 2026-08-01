@@ -76,6 +76,12 @@ export interface TextNode {
   align: 'left' | 'center' | 'right';
 }
 
+export interface Mesh3DData {
+  name: string;
+  vertices: { x: number; y: number; z: number }[];
+  faces: number[][];
+}
+
 export interface DocumentMetadata {
   title: string;
   createdAt: number;
